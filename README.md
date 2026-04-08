@@ -172,6 +172,16 @@ The missed-critical penalty **zeroes the priority bonus** for the same step — 
 perfect rank order cannot compensate for letting a deteriorating patient go unnoticed.
 
 ---
+## Why This Environment is Challenging for LLM Agents
+
+- Requires temporal reasoning over sliding windows (not single-step classification)
+- Second-derivative trend detection (acceleration, not just thresholding)
+- Multi-patient parallel reasoning (Task 3)
+- Confound handling (artifact vs exertion vs deterioration)
+- Asymmetric cost-sensitive decision making
+
+This prevents shortcut policies and requires genuine reasoning.
+
 
 ## Observation & Action Schema
 
@@ -321,6 +331,14 @@ no patient is in SYNERA_STATE, the maximum achievable is just the priority signa
 A perfect agent scores 1.0 regardless of which patients happen to be alerting.
 
 ---
+
+## Known Failure Modes
+
+- Early calibration phase may cause trajectory misclassification
+- High noise + motion overlap can confuse Rule A vs B
+- Gradual drift patients (PT-0005) may be under-prioritized
+
+Future work includes adaptive baselines and multimodal fusion.
 
 ## API Reference
 
