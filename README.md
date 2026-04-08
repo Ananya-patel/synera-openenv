@@ -1,10 +1,12 @@
-﻿---
+---
 title: Synera Triage OpenEnv
 emoji: 🏥
 colorFrom: blue
 colorTo: red
 sdk: docker
 pinned: false
+tags:
+  - openenv
 ---
 
 # Synera Triage OpenEnv
