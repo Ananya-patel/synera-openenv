@@ -271,7 +271,7 @@ def run_task(task_id: str) -> dict:
         print(f"[STEP] task={task_id} step={step_count} reward={round(reward['total'], 4)} done={done}", flush=True)
 
     avg_reward = total_reward / max(1, step_count)
-    task_score = round(max(0.0, min(1.0, (avg_reward + 1.0) / 2.0)), 4)
+    task_score = round(max(0.0001, min(0.9999, (avg_reward + 1.0) / 2.0)), 4)
 
     summary = {
         "event": "END",
