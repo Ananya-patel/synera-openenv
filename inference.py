@@ -268,7 +268,7 @@ def run_task(task_id: str) -> dict:
             step_log["reasoning_snippet"] = reasoning[:300].replace("\n", " ") + (
                 "..." if len(reasoning) > 300 else ""
             )
-        print(json.dumps(step_log), flush=True)
+        print(f"[STEP] task={task_id} step={step_count} reward={round(reward['total'], 4)} done={done}", flush=True)
 
     avg_reward = total_reward / max(1, step_count)
     task_score = round(max(0.0, min(1.0, (avg_reward + 1.0) / 2.0)), 4)
@@ -287,7 +287,7 @@ def run_task(task_id: str) -> dict:
     }
 
     # ── [END] log ──────────────────────────────────────────────────────────────
-    print(json.dumps(summary), flush=True)
+    print(f"[END] task={task_id} score={task_score} steps={step_count} total_reward={round(total_reward, 4)} avg_reward={round(avg_reward, 4)}", flush=True)
     return summary
 
 
