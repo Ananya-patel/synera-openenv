@@ -232,15 +232,7 @@ def run_task(task_id: str) -> dict:
     reasoning_steps = 0
 
     # ── [START] log ────────────────────────────────────────────────────────────
-    print(json.dumps({
-        "event": "START",
-        "task_id": task_id,
-        "n_patients": len(obs.get("patients", [])),
-        "seed": 42,
-        "model": MODEL_NAME,
-        "agent": "chain-of-thought clinical reasoner",
-    }), flush=True)
-
+    print(f"[START] task={task_id} n_patients={len(obs.get('patients', []))} seed=42 model={MODEL_NAME}", flush=True)
     while not done:
         t0 = time.time()
         action, reasoning = ask_agent(obs)
