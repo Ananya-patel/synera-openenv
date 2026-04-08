@@ -67,7 +67,8 @@ def grade_task1(
     artifact_signal = round(0.6 * f1 + 0.4 * accuracy, 3)
     fp_penalty      = round(-0.2 * fp, 3)
     fn_penalty      = round(-0.8 * fn, 3)   # missed artifact: high clinical cost
-    total = round(max(-1.0, min(1.0, artifact_signal + fp_penalty + fn_penalty)), 4)
+    total = round(max(0.0001, min(0.9999, (artifact_signal + fp_penalty + fn_penalty + 1.0) / 2.0)), 4)
+
 
     return Reward(
         total=total,
@@ -130,9 +131,9 @@ def grade_task2(
     fp_penalty        = round(-0.30 * false_alarms / n, 3)
     stable_fp_penalty = round(-0.20 * stable_fp / n, 3)
     missed_penalty    = round(-0.50 * missed / n, 3)
-    total = round(max(-1.0, min(1.0,
-        exertion_signal + trajectory_signal + stable_signal
-        + fp_penalty + stable_fp_penalty + missed_penalty)), 4)
+    total = round(max(0.0001, min(0.9999, (
+    exertion_signal + trajectory_signal + stable_signal
+    + fp_penalty + stable_fp_penalty + missed_penalty + 1.0) / 2.0)), 4)
 
     return Reward(
         total=total,
@@ -219,7 +220,7 @@ def grade_task3(
     bonus_raw  = motion_signal + traj_signal + priority_signal
     bonus_norm = min(1.0, bonus_raw / max_achievable)
 
-    total = round(max(-1.0, min(1.0, bonus_norm + fp_penalty + missed_penalty)), 4)
+    total = round(max(0.0001, min(0.9999, (bonus_norm + fp_penalty + missed_penalty + 1.0) / 2.0)), 4)
 
     return Reward(
         total=total,
