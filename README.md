@@ -6,7 +6,7 @@ colorTo: red
 sdk: docker
 pinned: false
 tags:
-  - openenv
+  - openenv , Meta , Huggingface, Scaler
 ---
 
 # Synera Triage OpenEnv
