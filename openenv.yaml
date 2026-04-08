@@ -1,0 +1,102 @@
+name: synera-triage-v1
+version: "1.0.0"
+description: >
+  A real-world clinical triage RL environment wrapping the Synera hospital monitoring
+  engine. An AI agent observes wearable vital streams (heart rate, SpO2, temperature,
+  IMU motion) from ward patients and must apply three Synera rules progressively:
+  artifact rejection, motion-gated exertion classification, and trajectory-acceleration
+  detection with multi-patient priority ranking.
+
+domain: healthcare
+tags:
+  - openenv
+  - clinical-triage
+  - healthcare
+  - vitals-monitoring
+  - real-world
+
+tasks:
+  - id: task1
+    name: "Artifact rejection"
+    difficulty: easy
+    description: >
+      Single patient (PT-0004, COPD/AFib) with a loose PPG sensor causing a 228 BPM
+      spike at reading index 3. Agent must identify and discard artifact readings
+      without discarding valid data. Graded by F1 + accuracy.
+    reward_range: [-1.0, 1.0]
+    expected_baseline_score: 0.70
+
+  - id: task2
+    name: "Motion-gated classification"
+    difficulty: medium
+    description: >
+      Two simultaneous patients: PT-0002 (post-op, silent cardiac deterioration via
+      exponential HR acceleration) and PT-0003 (ward patient walking, exertion spike
+      with motion_score=8). Agent must distinguish exertion from genuine deterioration
+      and avoid alert fatigue.
+    reward_range: [-1.0, 1.0]
+    expected_baseline_score: 0.55
+
+  - id: task3
+    name: "Trajectory triage + priority ranking"
+    difficulty: hard
+    description: >
+      All 5 patients simultaneously. PT-0002 enters exponential HR acceleration.
+      Agent must watch the 10-reading sliding window, identify second-derivative
+      acceleration from personal baselines, fire a SYNERA_STATE alert, and correctly
+      rank all 5 patients by urgency. Partial rewards for each component.
+      Missed SYNERA_STATE carries a -0.5 penalty that cannot be absorbed by ranking.
+    reward_range: [-1.0, 1.0]
+    expected_baseline_score: 0.35
+
+observation:
+  type: structured
+  description: >
+    List of PatientObservation objects (one per active patient). Each contains:
+    window (up to 10 VitalSnapshots with hr/spo2/temp/motion_score),
+    baseline_hr_mean, baseline_hr_std, calibration_complete, step_number.
+
+action:
+  type: structured
+  description: >
+    List of PatientDecision objects (one per active patient). Each contains:
+    is_artifact (bool), is_exertion (bool), alert_tier (int 0-3), priority_rank (int).
+
+reward:
+  type: shaped
+  description: >
+    Per-step shaped reward with partial progress signals throughout the episode.
+    Rewards correct artifact detection, exertion gating, trajectory identification,
+    and priority ordering. Penalises false positives (-0.2) and missed SYNERA_STATE
+    (-0.5, non-absorbable) to reflect clinical cost structure.
+
+endpoints:
+  health: GET  /health
+  reset:  POST /reset
+  step:   POST /step
+  state:  GET  /state
+  tasks:  GET  /tasks
+
+environment_variables:
+  - name: API_BASE_URL
+    description: LLM API endpoint used by inference.py
+    required: true
+  - name: MODEL_NAME
+    description: LLM model identifier used by inference.py
+    required: true
+  - name: HF_TOKEN
+    description: Hugging Face / API authentication token
+    required: true
+  - name: TASK_ID
+    description: Default task to load (task1 | task2 | task3)
+    default: "task1"
+  - name: SEED
+    description: Random seed for reproducibility
+    default: "42"
+
+authors:
+  - Harsh Singhal
+  - Anchita Jain
+  - Ananya Patel
+
+license: MIT
