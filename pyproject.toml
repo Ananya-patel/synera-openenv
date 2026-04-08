@@ -7,7 +7,16 @@ name = "synera-openenv"
 version = "1.0.0"
 description = "Synera Triage OpenEnv - Clinical triage RL environment"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "openenv-core>=0.2.0",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "openai"
+]
+
+[project.scripts]
+server = "server.app:main"
 
 [tool.openenv]
 entry_point = "inference.py"
