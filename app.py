@@ -16,98 +16,71 @@ Environment variables:
   SEED           Random seed for reproducibility       default: 42
   PORT           HTTP port                             default: 7860
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+import uvicorn
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from env.environment import SyneraTriageEnv, VALID_TASKS
 from models.schemas import Action, Observation, Reward
+from env.environment import SyneraTriageEnv
 
-app = FastAPI(
-    title="Synera Clinical Triage Environment",
-    description=(
-        "OpenEnv-compliant RL environment. An AI agent observes wearable vital streams "
-        "from hospital ward patients and must triage correctly across 3 tasks: "
-        "artifact rejection (easy), exertion classification (medium), "
-        "trajectory acceleration triage (hard)."
-    ),
-    version="1.0.0",
-)
+app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-)
+# One env instance per task — validator will hit each separately
+_envs: dict[str, SyneraTriageEnv] = {}
 
-_env: Optional[SyneraTriageEnv] = None
+def _get_env(task_id: str) -> SyneraTriageEnv:
+    if task_id not in _envs:
+        _envs[task_id] = SyneraTriageEnv(task_id=task_id, seed=42)
+    return _envs[task_id]
 
 
-def _get_env() -> SyneraTriageEnv:
-    global _env
-    if _env is None:
-        task = os.getenv("TASK_ID", "task1")
-        seed = int(os.getenv("SEED", "42"))
-        _env = SyneraTriageEnv(task_id=task, seed=seed)
-    return _env
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
-
-# ── Request/response models ────────────────────────────────────────────────────
-
-class ResetRequest(BaseModel):
-    task_id: Optional[str] = None
-    seed: Optional[int] = None
-
-
-class StepResponse(BaseModel):
-    observation: Observation
-    reward: Reward
-    done: bool
-    info: dict
-
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "environment": "synera-triage-v1", "version": "1.0.0"}
+    return {"status": "healthy"}
 
 
-@app.get("/tasks")
-def list_tasks():
-    return SyneraTriageEnv.task_descriptions()
+@app.post("/reset")
+def reset(task_id: str = "task1"):
+    env = _get_env(task_id)
+    obs = env.reset()
+    return {"observation": obs.model_dump(), "task_id": task_id}
 
 
-@app.post("/reset", response_model=Observation)
-def reset(req: ResetRequest = ResetRequest()):
-    global _env
-    task_id = req.task_id or os.getenv("TASK_ID", "task1")
-    seed = req.seed if req.seed is not None else int(os.getenv("SEED", "42"))
-    if task_id not in VALID_TASKS:
-        raise HTTPException(400, f"task_id must be one of {VALID_TASKS}")
-    _env = SyneraTriageEnv(task_id=task_id, seed=seed)
-    return _env.reset()
-
-
-@app.post("/step", response_model=StepResponse)
-def step(action: Action):
-    env = _get_env()
+@app.post("/step")
+def step(action: Action, task_id: str = "task1"):
+    env = _get_env(task_id)
     try:
         obs, reward, done, info = env.step(action)
     except RuntimeError as e:
-        raise HTTPException(400, str(e))
-    return StepResponse(observation=obs, reward=reward, done=done, info=info)
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "observation": obs.model_dump(),
+        "reward": reward.model_dump(),   # includes score field
+        "score": reward.score,           # also hoisted to top level
+        "done": done,
+        "info": info,
+    }
 
 
 @app.get("/state")
-def state():
-    return _get_env().state()
+def state(task_id: str = "task1"):
+    env = _get_env(task_id)
+    return env.state()
 
+
+@app.get("/tasks")
+def tasks():
+    return SyneraTriageEnv.task_descriptions()
+
+
+def main():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", "7860"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    main()
