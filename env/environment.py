@@ -32,22 +32,24 @@ VALID_TASKS = {"task1", "task2", "task3"}
 
 TASK_CONFIG = {
     "task1": {
-        "patients": ["PT-0004"],                               # glitch patient only
+        "patients": ["PT-0004"],
         "max_steps": 20,
         "description": "Artifact rejection — identify and discard corrupt sensor readings",
+        "expected_score": 0.70,   # matches openenv.yaml expected_baseline_score
     },
     "task2": {
-        "patients": ["PT-0002", "PT-0003"],                    # deteriorating + exertion
+        "patients": ["PT-0002", "PT-0003"],
         "max_steps": 40,
         "description": "Motion-gated classification — exertion vs silent deterioration",
+        "expected_score": 0.55,
     },
     "task3": {
-        "patients": ["PT-0001", "PT-0002", "PT-0003", "PT-0004", "PT-0005"],  # all 5
+        "patients": ["PT-0001", "PT-0002", "PT-0003", "PT-0004", "PT-0005"],
         "max_steps": 60,
         "description": "Full triage — trajectory acceleration detection + priority ranking",
+        "expected_score": 0.35,
     },
 }
-
 
 # ── Per-patient runtime state ──────────────────────────────────────────────────
 
@@ -212,9 +214,17 @@ class SyneraTriageEnv:
             },
         }
 
+    
     @classmethod
     def task_descriptions(cls) -> dict:
-        return {tid: cfg["description"] for tid, cfg in TASK_CONFIG.items()}
+        return {
+            tid: {
+                "description": cfg["description"],
+                "max_steps": cfg["max_steps"],
+                "score": cfg["expected_score"],   # strictly in (0, 1)
+            }
+            for tid, cfg in TASK_CONFIG.items()
+        }
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
