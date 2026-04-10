@@ -312,11 +312,13 @@ def main():
     print("BASELINE SCORES", flush=True)
     print("=" * 60, flush=True)
     for tid in TASKS:
-        
-        
         score = all_results.get(tid, {}).get("task_score", 0.0001)
-        overall = sum(all_results.get(t, {}).get("task_score", 0.0001) for t in TASKS) / len(TASKS)
-        print(f"  overall: {overall:.4f}", flush=True)
+        print(f"  {tid}: {score:.4f}", flush=True)
+
+        
+    
+    overall = sum(all_results.get(t, {}).get("task_score", 0.0001) for t in TASKS) / len(TASKS)
+    print(f"  overall: {overall:.4f}", flush=True)
         
     
       
