@@ -303,17 +303,20 @@ def main():
         except Exception as e:
             err = {"event": "ERROR", "task_id": task_id, "error": str(e)}
             print(json.dumps(err), flush=True)
-            all_results[task_id] = {"task_score": 0.0, "error": str(e)}
+            # FIXED
+            all_results[task_id] = {"task_score": 0.0001, "error": str(e)}
 
     # Final score summary
     print(f"\n{'=' * 60}", flush=True)
     print("BASELINE SCORES", flush=True)
     print("=" * 60, flush=True)
     for tid in TASKS:
-        score = all_results.get(tid, {}).get("task_score", 0.0)
-        print(f"  {tid}: {score:.4f}", flush=True)
-    overall = sum(all_results.get(t, {}).get("task_score", 0.0) for t in TASKS) / len(TASKS)
-    print(f"  overall: {overall:.4f}", flush=True)
+        score = all_results.get(tid, {}).get("task_score", 0.0001)
+          overall = sum(all_results.get(t, {}).get("task_score", 0.0001) for t in TASKS) / len(TASKS)
+        
+    
+      
+       print(f"  overall: {overall:.4f}", flush=True)
 
 
 if __name__ == "__main__":
