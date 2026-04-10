@@ -20,33 +20,24 @@ tasks:
     name: "Artifact rejection"
     difficulty: easy
     description: >
-      Single patient (PT-0004, COPD/AFib) with a loose PPG sensor causing a 228 BPM
-      spike at reading index 3. Agent must identify and discard artifact readings
-      without discarding valid data. Graded by F1 + accuracy.
-    reward_range: [-1.0, 1.0]
+      ...
+    reward_range: [0.0001, 0.9999]    # ← change from [-1.0, 1.0]
     expected_baseline_score: 0.70
 
   - id: task2
     name: "Motion-gated classification"
     difficulty: medium
     description: >
-      Two simultaneous patients: PT-0002 (post-op, silent cardiac deterioration via
-      exponential HR acceleration) and PT-0003 (ward patient walking, exertion spike
-      with motion_score=8). Agent must distinguish exertion from genuine deterioration
-      and avoid alert fatigue.
-    reward_range: [-1.0, 1.0]
+      ...
+    reward_range: [0.0001, 0.9999]    # ← change
     expected_baseline_score: 0.55
 
   - id: task3
     name: "Trajectory triage + priority ranking"
     difficulty: hard
     description: >
-      All 5 patients simultaneously. PT-0002 enters exponential HR acceleration.
-      Agent must watch the 10-reading sliding window, identify second-derivative
-      acceleration from personal baselines, fire a SYNERA_STATE alert, and correctly
-      rank all 5 patients by urgency. Partial rewards for each component.
-      Missed SYNERA_STATE carries a -0.5 penalty that cannot be absorbed by ranking.
-    reward_range: [-1.0, 1.0]
+      ...
+    reward_range: [0.0001, 0.9999]    # ← change
     expected_baseline_score: 0.35
 
 observation:
@@ -64,6 +55,7 @@ action:
 
 reward:
   type: shaped
+  range: [0.0001, 0.9999]
   description: >
     Per-step shaped reward with partial progress signals throughout the episode.
     Rewards correct artifact detection, exertion gating, trajectory identification,
