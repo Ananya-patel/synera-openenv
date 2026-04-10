@@ -65,9 +65,9 @@ class ResetRequest(BaseModel):
 class StepResponse(BaseModel):
     observation: Observation
     reward: Reward
+    score: float          # ← add this
     done: bool
     info: dict
-
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -99,7 +99,13 @@ def step(action: Action):
         obs, reward, done, info = env.step(action)
     except RuntimeError as e:
         raise HTTPException(400, str(e))
-    return StepResponse(observation=obs, reward=reward, done=done, info=info)
+    return StepResponse(
+        observation=obs,
+        reward=reward,
+        score=reward.score,   # ← add this
+        done=done,
+        info=info,
+    )
 
 
 @app.get("/state")
