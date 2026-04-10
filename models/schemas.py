@@ -74,9 +74,9 @@ class Reward(BaseModel):
     breakdown: RewardBreakdown
     info: dict = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def sync_score(self) -> "Reward":
-        # Remap total from [-1, 1] → (0, 1) strictly, clamped
-        remapped = (self.total + 1.0) / 2.0
-        self.score = round(max(0.0001, min(0.9999, remapped)), 4)
-        return self
+    # AFTER
+@model_validator(mode="after")
+def sync_score(self) -> "Reward":
+    # total is already in (0, 1) from graders — clamp only, no remap
+    self.score = round(max(0.0001, min(0.9999, self.total)), 4)
+    return self
