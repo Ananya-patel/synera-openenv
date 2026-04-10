@@ -218,7 +218,7 @@ def run_task(task_id: str, agent_fn, label: str, verbose: bool = True) -> dict:
     avg = total_reward / max(1, step)
     # FIXED
     # AFTER
-    task_score = round(max(0.0001, min(0.9999, avg)), 4)
+    task_score = round(max(0.01, min(0.99, avg)), 4)
 
     if verbose:
         colour = GREEN if task_score >= 0.7 else (YELLOW if task_score >= 0.4 else RED)
