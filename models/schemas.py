@@ -9,7 +9,7 @@ Required by the OpenEnv spec:
 """
 from __future__ import annotations
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Per-reading snapshot (what the agent sees) ─────────────────────────────────
@@ -66,7 +66,17 @@ class RewardBreakdown(BaseModel):
     missed_alert_penalty: float = 0.0
 
 
+
+
 class Reward(BaseModel):
     total: float = Field(..., description="Net step reward in [-1.0, 1.0]")
+    score: float = Field(0.5, description="OpenEnv normalized score strictly in (0, 1)")
     breakdown: RewardBreakdown
     info: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def sync_score(self) -> "Reward":
+        # Remap total from [-1, 1] → (0, 1) strictly, clamped
+        remapped = (self.total + 1.0) / 2.0
+        self.score = round(max(0.0001, min(0.9999, remapped)), 4)
+        return self
