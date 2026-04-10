@@ -1,6 +1,5 @@
 ---
 title: Synera Triage OpenEnv
-emoji: 🏥
 colorFrom: blue
 colorTo: red
 sdk: docker
