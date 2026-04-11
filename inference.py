@@ -4,9 +4,14 @@ inference.py — Synera Triage OpenEnv chain-of-thought clinical reasoning agent
 REQUIRED by hackathon spec:
 - Uses OpenAI API client (not Ollama/LangChain)
 - Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment variables
-- Emits structured [START], [STEP], [END] stdout logs as JSON
+- Emits structured [START] / [STEP] / [END] stdout lines (text prefix + key=value)
 - File must be named inference.py and live in project root
 - Must complete in < 20 minutes on vcpu=2, memory=8gb
+
+Validator-required stdout format:
+  [START] task=task1 n_patients=1 seed=42
+  [STEP] task=task1 step=1 reward=0.87 done=False
+  [END] task=task1 score=0.87 steps=20 total_reward=17.4 avg_reward=0.87
 
 Usage:
   export API_BASE_URL=https://api.openai.com/v1
@@ -33,11 +38,11 @@ HF_TOKEN     = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY", ""
 ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 
 if not HF_TOKEN:
-    print(json.dumps({"event": "ERROR", "error": "HF_TOKEN (or OPENAI_API_KEY) not set"}), flush=True)
-    # Still print END events so the validator can read scores
+    print("ERROR: HF_TOKEN (or OPENAI_API_KEY) not set", file=sys.stderr)
+    # Emit required structured blocks so the validator can find them even on failure
     for _tid in ["task1", "task2", "task3"]:
-        print(json.dumps({"event": "END", "task_id": _tid, "score": 0.1, "task_score": 0.1,
-                          "error": "HF_TOKEN not set"}), flush=True)
+        print(f"[START] task={_tid} n_patients=0 seed=42", flush=True)
+        print(f"[END] task={_tid} score=0.1 steps=0 total_reward=0.0 avg_reward=0.1", flush=True)
     sys.exit(1)
 
 client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
@@ -45,12 +50,7 @@ http   = httpx.Client(base_url=ENV_BASE_URL, timeout=60)
 
 TASKS = ["task1", "task2", "task3"]
 
-# ── System prompt (chain-of-thought clinical reasoner) ─────────────────────────
-#
-# Design principle: do NOT hand the model a rule lookup table.
-# Instead, give it clinical context and ask it to reason like a clinician.
-# The model must infer artifact/exertion/trajectory patterns from the data
-# itself — this is what Phase 2 agentic evaluation (Nemotron 3 Super) tests.
+# ── System prompt ───────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are Synera, an autonomous AI clinician monitoring hospital patients
 via continuous wearable vital sensors. Your role is real-time triage: determine which patients
@@ -103,8 +103,6 @@ alert_tier meanings: 0=stable, 1=watch (mild deviation), 2=advisory, 3=critical/
 
 
 # ── Observation formatter ───────────────────────────────────────────────────────
-# Present data as a clinical briefing rather than raw JSON — this activates the
-# model's medical knowledge and produces richer chain-of-thought.
 
 def _format_obs(obs: dict) -> str:
     """Render observation as a human-readable clinical briefing."""
@@ -140,7 +138,6 @@ def _format_obs(obs: dict) -> str:
                 f"Motion={r['motion_score']}{dev}{marker}"
             )
 
-        # Summarise HR trend for the model
         hrs = [r["heart_rate"] for r in window]
         if len(hrs) >= 3:
             d1 = [hrs[i+1] - hrs[i] for i in range(len(hrs)-1)]
@@ -160,19 +157,16 @@ def _format_obs(obs: dict) -> str:
 def _safe_parse(raw: str, patients: list) -> tuple[dict, str]:
     """
     Parse LLM response containing optional <reasoning> block then JSON.
-    Returns (action_dict, reasoning_text).
-    Falls back to safe no-op on parse failure.
+    Returns (action_dict, reasoning_text). Falls back to safe no-op on parse failure.
     """
     reasoning = ""
     text = raw.strip()
 
-    # Extract reasoning block if present
     reasoning_match = re.search(r"<reasoning>(.*?)</reasoning>", text, re.DOTALL)
     if reasoning_match:
         reasoning = reasoning_match.group(1).strip()
         text = text[reasoning_match.end():].strip()
 
-    # Strip markdown code fences
     if text.startswith("```"):
         fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if fence_match:
@@ -180,14 +174,12 @@ def _safe_parse(raw: str, patients: list) -> tuple[dict, str]:
         else:
             text = "\n".join(text.split("\n")[1:]).strip()
 
-    # Find the JSON object (scan forward to first '{')
     brace_idx = text.find("{")
     if brace_idx > 0:
         text = text[brace_idx:]
 
     try:
         action = json.loads(text)
-        # Validate required fields exist
         for d in action.get("decisions", []):
             d.setdefault("is_artifact", False)
             d.setdefault("is_exertion", False)
@@ -206,10 +198,7 @@ def _safe_parse(raw: str, patients: list) -> tuple[dict, str]:
 
 
 def ask_agent(obs: dict) -> tuple[dict, str]:
-    """
-    Send observation to LLM as a clinical briefing.
-    Returns (action_dict, reasoning_text).
-    """
+    """Send observation to LLM. Returns (action_dict, reasoning_text)."""
     briefing = _format_obs(obs)
     resp = client.chat.completions.create(
         model=MODEL_NAME,
@@ -224,36 +213,47 @@ def ask_agent(obs: dict) -> tuple[dict, str]:
 
 
 def _clamp_score(value: float) -> float:
-    """Clamp a score to be strictly in (0, 1) — never 0.0 or 1.0."""
+    """Return a score that is strictly in (0, 1) — never 0.0 or 1.0."""
     return round(max(0.05, min(0.95, float(value))), 4)
 
 
 def run_task(task_id: str) -> dict:
-    """Run one full episode and return summary dict. Always prints [END] event."""
-    # Safe defaults — used if an exception fires before/during the episode
-    task_score     = 0.1
-    step_count     = 0
-    total_reward   = 0.0
+    """
+    Run one full episode and return summary dict.
+
+    Guarantees: [START] and [END] are ALWAYS printed to stdout in the
+    validator-required text format, even if the episode fails mid-way.
+    """
+    # Safe defaults used when the episode cannot start or complete
+    task_score      = 0.1
+    step_count      = 0
+    total_reward    = 0.0
     episode_rewards: list[float] = []
     reasoning_steps = 0
-    error_msg: str | None = None
+    n_patients      = 0
 
+    # Emit [START] before anything else so the validator sees it
+    # (we update n_patients once we have the reset response)
     try:
         reset_resp = http.post("/reset", json={"task_id": task_id, "seed": 42})
         reset_resp.raise_for_status()
         obs = reset_resp.json()
+        n_patients = len(obs.get("patients", []))
+    except Exception as exc:
+        # Cannot even reset — emit START + END with fallback score and bail
+        print(f"[START] task={task_id} n_patients=0 seed=42", flush=True)
+        print(f"[END] task={task_id} score=0.1 steps=0 "
+              f"total_reward=0.0 avg_reward=0.1", flush=True)
+        print(json.dumps({"event": "ERROR", "task_id": task_id, "error": str(exc)}),
+              flush=True)
+        return {"task_id": task_id, "task_score": 0.1, "steps": 0, "error": str(exc)}
 
-        done = False
+    # ── [START] ────────────────────────────────────────────────────────────────
+    print(f"[START] task={task_id} n_patients={n_patients} seed=42 model={MODEL_NAME}",
+          flush=True)
 
-        # ── [START] log ────────────────────────────────────────────────────────
-        print(json.dumps({
-            "event": "START",
-            "task_id": task_id,
-            "n_patients": len(obs.get("patients", [])),
-            "seed": 42,
-            "model": MODEL_NAME,
-        }), flush=True)
-
+    done = False
+    try:
         while not done:
             t0 = time.time()
             action, reasoning = ask_agent(obs)
@@ -265,7 +265,6 @@ def run_task(task_id: str) -> dict:
             obs    = data["observation"]
             reward = data["reward"]
             done   = data["done"]
-            info   = data.get("info", {})
 
             step_reward = float(reward.get("total", reward.get("score", 0.5)))
             total_reward += step_reward
@@ -276,44 +275,46 @@ def run_task(task_id: str) -> dict:
 
             step_score = _clamp_score(reward.get("score", step_reward))
 
-            # ── [STEP] log — JSON format ────────────────────────────────────
-            step_log: dict = {
-                "event": "STEP",
-                "task_id": task_id,
-                "step": step_count,
-                "score": step_score,
-                "reward": round(step_reward, 4),
-                "done": done,
-                "latency_ms": round((time.time() - t0) * 1000),
+            # ── [STEP] — validator-required text format ─────────────────────
+            print(f"[STEP] task={task_id} step={step_count} "
+                  f"reward={round(step_reward, 4)} score={step_score} done={done}",
+                  flush=True)
+
+            # Also emit a JSON detail line for richer logging
+            step_detail: dict = {
+                "event": "STEP", "task_id": task_id, "step": step_count,
+                "score": step_score, "reward": round(step_reward, 4),
+                "done": done, "latency_ms": round((time.time() - t0) * 1000),
             }
             if reasoning:
-                step_log["reasoning_snippet"] = (
+                step_detail["reasoning_snippet"] = (
                     reasoning[:300].replace("\n", " ")
                     + ("..." if len(reasoning) > 300 else "")
                 )
-            print(json.dumps(step_log), flush=True)
+            print(json.dumps(step_detail), flush=True)
 
         avg_reward = total_reward / max(1, step_count)
         task_score = _clamp_score(avg_reward)
 
     except Exception as exc:
-        error_msg = str(exc)
-        print(json.dumps({"event": "ERROR", "task_id": task_id, "error": error_msg}),
+        print(json.dumps({"event": "ERROR", "task_id": task_id, "error": str(exc)}),
               flush=True)
-        # Compute partial score from whatever steps completed
         if step_count > 0 and episode_rewards:
-            avg = total_reward / step_count
-            task_score = _clamp_score(avg)
+            task_score = _clamp_score(total_reward / step_count)
         else:
-            task_score = 0.1   # safe default strictly in (0, 1)
+            task_score = 0.1
 
     avg_reward = total_reward / max(1, step_count)
 
-    summary: dict = {
-        "event":          "END",
+    # ── [END] — ALWAYS printed, validator-required text format ─────────────────
+    print(f"[END] task={task_id} score={task_score} steps={step_count} "
+          f"total_reward={round(total_reward, 4)} avg_reward={round(avg_reward, 4)}",
+          flush=True)
+
+    summary = {
         "task_id":        task_id,
-        "score":          task_score,       # key the validator reads
-        "task_score":     task_score,       # alias kept for backward compat
+        "task_score":     task_score,
+        "score":          task_score,
         "steps":          step_count,
         "total_reward":   round(total_reward, 4),
         "avg_reward":     round(avg_reward, 4),
@@ -323,11 +324,6 @@ def run_task(task_id: str) -> dict:
     if episode_rewards:
         summary["min_reward"] = round(min(episode_rewards), 4)
         summary["max_reward"] = round(max(episode_rewards), 4)
-    if error_msg:
-        summary["error"] = error_msg
-
-    # ── [END] log — ALWAYS printed, even on failure ─────────────────────────
-    print(json.dumps(summary), flush=True)
     return summary
 
 
@@ -335,36 +331,34 @@ def main():
     all_results: dict[str, dict] = {}
 
     for task_id in TASKS:
-        print(json.dumps({"event": "TASK_BEGIN", "task_id": task_id}), flush=True)
+        print(f"\n{'=' * 60}", flush=True)
+        print(f"Running {task_id}...", flush=True)
         try:
             summary = run_task(task_id)
             all_results[task_id] = summary
         except Exception as exc:
-            # run_task handles its own exceptions; this is a last-resort catch
+            # run_task handles its own exceptions; this is a last-resort catch.
+            # Still emit [START]/[END] so validator can parse this task.
+            print(f"[START] task={task_id} n_patients=0 seed=42", flush=True)
             task_score = 0.1
-            summary = {
-                "event":      "END",
-                "task_id":    task_id,
-                "score":      task_score,
-                "task_score": task_score,
-                "error":      str(exc),
-            }
-            print(json.dumps(summary), flush=True)
-            all_results[task_id] = summary
+            print(f"[END] task={task_id} score={task_score} steps=0 "
+                  f"total_reward=0.0 avg_reward={task_score}", flush=True)
+            print(json.dumps({"event": "ERROR", "task_id": task_id, "error": str(exc)}),
+                  flush=True)
+            all_results[task_id] = {"task_score": task_score}
 
     # ── Final score summary ─────────────────────────────────────────────────
-    scores = {tid: all_results.get(tid, {}).get("task_score", 0.1) for tid in TASKS}
-    overall = round(sum(scores.values()) / len(TASKS), 4)
-
-    print(json.dumps({"event": "FINAL", "scores": scores, "overall": overall}), flush=True)
-
-    # Human-readable summary (for convenience)
     print(f"\n{'=' * 60}", flush=True)
     print("BASELINE SCORES", flush=True)
     print("=" * 60, flush=True)
     for tid in TASKS:
-        print(f"  {tid}: {scores[tid]:.4f}", flush=True)
-    print(f"  overall: {overall:.4f}", flush=True)
+        score = all_results.get(tid, {}).get("task_score", 0.1)
+        print(f"  {tid}: {score:.4f}", flush=True)
+
+    overall = sum(
+        all_results.get(t, {}).get("task_score", 0.1) for t in TASKS
+    ) / len(TASKS)
+    print(f"  overall: {round(overall, 4):.4f}", flush=True)
 
 
 if __name__ == "__main__":
