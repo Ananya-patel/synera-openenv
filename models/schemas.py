@@ -69,7 +69,7 @@ class RewardBreakdown(BaseModel):
 
 
 class Reward(BaseModel):
-    total: float = Field(..., description="Net step reward, normalized to (0.01, 0.99)")
+    total: float = Field(..., description="Net step reward, normalized to (0.05, 0.95)")
     score: float = Field(0.5, description="OpenEnv normalized score strictly in (0, 1)")
     breakdown: RewardBreakdown
     info: dict = Field(default_factory=dict)
@@ -77,5 +77,5 @@ class Reward(BaseModel):
     @model_validator(mode="after")
     def sync_score(self) -> "Reward":
         # total is already in (0, 1) from graders — clamp only, no remap
-        self.score = round(max(0.01, min(0.99, self.total)), 4)
+        self.score = round(max(0.05, min(0.95, self.total)), 4)
         return self

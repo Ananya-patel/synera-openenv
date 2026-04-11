@@ -272,7 +272,7 @@ def run_task(task_id: str) -> dict:
 
     avg_reward = total_reward / max(1, step_count)
     # AFTER
-    task_score = round(max(0.01, min(0.99, avg_reward)), 4)
+    task_score = round(max(0.05, min(0.95, avg_reward)), 4)
 
     summary = {
         "event": "END",
@@ -305,19 +305,19 @@ def main():
             err = {"event": "ERROR", "task_id": task_id, "error": str(e)}
             print(json.dumps(err), flush=True)
             # FIXED
-            all_results[task_id] = {"task_score": 0.01, "error": str(e)}
+            all_results[task_id] = {"task_score": 0.05, "error": str(e)}
 
     # Final score summary
     print(f"\n{'=' * 60}", flush=True)
     print("BASELINE SCORES", flush=True)
     print("=" * 60, flush=True)
     for tid in TASKS:
-        score = all_results.get(tid, {}).get("task_score", 0.01)
+        score = all_results.get(tid, {}).get("task_score", 0.05)
         print(f"  {tid}: {score:.4f}", flush=True)
 
         
     
-    overall = sum(all_results.get(t, {}).get("task_score", 0.01) for t in TASKS) / len(TASKS)
+    overall = sum(all_results.get(t, {}).get("task_score", 0.05) for t in TASKS) / len(TASKS)
     print(f"  overall: {overall:.4f}", flush=True)
         
     
