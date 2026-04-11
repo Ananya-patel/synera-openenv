@@ -64,11 +64,12 @@ def grade_task1(
     total_p   = tp + fp + fn + tn
     accuracy  = (tp + tn) / total_p if total_p > 0 else 0.0
 
-    artifact_signal = round(0.6 * f1 + 0.4 * accuracy, 3)
+    artifact_signal_raw = 0.6 * f1 + 0.4 * accuracy
+    # Clamp signal to strictly (0, 1) — never exactly 0.0 or 1.0
+    artifact_signal = round(max(0.001, min(0.999, artifact_signal_raw)), 3)
     fp_penalty      = round(-0.2 * fp, 3)
     fn_penalty      = round(-0.8 * fn, 3)   # missed artifact: high clinical cost
-    total = round(max(0.05, min(0.95, (artifact_signal + fp_penalty + fn_penalty + 1.0) / 2.0)), 4)
-
+    total = round(max(0.05, min(0.95, (artifact_signal_raw + fp_penalty + fn_penalty + 1.0) / 2.0)), 4)
 
     return Reward(
         total=total,
@@ -77,8 +78,7 @@ def grade_task1(
             false_positive_penalty=fp_penalty,
             missed_alert_penalty=fn_penalty,
         ),
-        info={"tp": tp, "fp": fp, "fn": fn, "tn": tn,
-              "f1": round(f1, 3), "accuracy": round(accuracy, 3)},
+        info={"tp": tp, "fp": fp, "fn": fn, "tn": tn},
     )
 
 
@@ -125,21 +125,26 @@ def grade_task2(
             elif d.alert_tier <= 1:
                 stable_correct += 1            # correctly stayed silent
 
-    exertion_signal   = round(0.30 * exertion_correct / n, 3)
-    trajectory_signal = round(0.50 * alert_correct / n, 3)
-    stable_signal     = round(0.10 * stable_correct / n, 3)
+    exertion_signal_raw   = 0.30 * exertion_correct / n
+    trajectory_signal_raw = 0.50 * alert_correct / n
+    stable_signal_raw     = 0.10 * stable_correct / n
     fp_penalty        = round(-0.30 * false_alarms / n, 3)
     stable_fp_penalty = round(-0.20 * stable_fp / n, 3)
     missed_penalty    = round(-0.50 * missed / n, 3)
+
+    # Clamp signal components to strictly (0, 1) for breakdown display
+    exertion_signal   = round(max(0.001, min(0.999, exertion_signal_raw)), 3)
+    trajectory_signal = round(max(0.001, min(0.999, trajectory_signal_raw + stable_signal_raw)), 3)
+
     total = round(max(0.05, min(0.95, (
-    exertion_signal + trajectory_signal + stable_signal
+    exertion_signal_raw + trajectory_signal_raw + stable_signal_raw
     + fp_penalty + stable_fp_penalty + missed_penalty + 1.0) / 2.0)), 4)
 
     return Reward(
         total=total,
         breakdown=RewardBreakdown(
             exertion_signal=exertion_signal,
-            trajectory_signal=round(trajectory_signal + stable_signal, 3),
+            trajectory_signal=trajectory_signal,
             false_positive_penalty=round(fp_penalty + stable_fp_penalty, 3),
             missed_alert_penalty=missed_penalty,
         ),
@@ -222,11 +227,15 @@ def grade_task3(
 
     total = round(max(0.05, min(0.95, (bonus_norm + fp_penalty + missed_penalty + 1.0) / 2.0)), 4)
 
+    # Clamp signal breakdown fields to strictly (0, 1) — never exactly 0.0 or 1.0
+    traj_display     = round(max(0.001, min(0.999, traj_signal)), 3)
+    priority_display = round(max(0.001, min(0.999, priority_signal)), 3)
+
     return Reward(
         total=total,
         breakdown=RewardBreakdown(
-            trajectory_signal=round(traj_signal, 3),
-            priority_signal=round(priority_signal, 3),
+            trajectory_signal=traj_display,
+            priority_signal=priority_display,
             false_positive_penalty=round(fp_penalty, 3),
             missed_alert_penalty=round(missed_penalty, 3),
         ),

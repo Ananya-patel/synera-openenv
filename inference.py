@@ -4,7 +4,7 @@ inference.py — Synera Triage OpenEnv chain-of-thought clinical reasoning agent
 REQUIRED by hackathon spec:
 - Uses OpenAI API client (not Ollama/LangChain)
 - Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment variables
-- Emits structured [START], [STEP], [END] stdout logs
+- Emits structured [START], [STEP], [END] stdout logs as JSON
 - File must be named inference.py and live in project root
 - Must complete in < 20 minutes on vcpu=2, memory=8gb
 
@@ -33,11 +33,15 @@ HF_TOKEN     = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY", ""
 ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 
 if not HF_TOKEN:
-    print("ERROR: HF_TOKEN (or OPENAI_API_KEY) not set", file=sys.stderr)
+    print(json.dumps({"event": "ERROR", "error": "HF_TOKEN (or OPENAI_API_KEY) not set"}), flush=True)
+    # Still print END events so the validator can read scores
+    for _tid in ["task1", "task2", "task3"]:
+        print(json.dumps({"event": "END", "task_id": _tid, "score": 0.1, "task_score": 0.1,
+                          "error": "HF_TOKEN not set"}), flush=True)
     sys.exit(1)
 
 client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
-http   = httpx.Client(base_url=ENV_BASE_URL, timeout=30)
+http   = httpx.Client(base_url=ENV_BASE_URL, timeout=60)
 
 TASKS = ["task1", "task2", "task3"]
 
@@ -219,110 +223,148 @@ def ask_agent(obs: dict) -> tuple[dict, str]:
     return _safe_parse(resp.choices[0].message.content, obs.get("patients", []))
 
 
+def _clamp_score(value: float) -> float:
+    """Clamp a score to be strictly in (0, 1) — never 0.0 or 1.0."""
+    return round(max(0.05, min(0.95, float(value))), 4)
+
+
 def run_task(task_id: str) -> dict:
-    """Run one full episode and return summary dict."""
-    reset_resp = http.post("/reset", json={"task_id": task_id, "seed": 42})
-    reset_resp.raise_for_status()
-    obs = reset_resp.json()
-
-    total_reward = 0.0
-    episode_rewards = []
-    step_count = 0
-    done = False
+    """Run one full episode and return summary dict. Always prints [END] event."""
+    # Safe defaults — used if an exception fires before/during the episode
+    task_score     = 0.1
+    step_count     = 0
+    total_reward   = 0.0
+    episode_rewards: list[float] = []
     reasoning_steps = 0
+    error_msg: str | None = None
 
-    # ── [START] log ────────────────────────────────────────────────────────────
-    print(f"[START] task={task_id} n_patients={len(obs.get('patients', []))} seed=42 model={MODEL_NAME}", flush=True)
-    while not done:
-        t0 = time.time()
-        action, reasoning = ask_agent(obs)
+    try:
+        reset_resp = http.post("/reset", json={"task_id": task_id, "seed": 42})
+        reset_resp.raise_for_status()
+        obs = reset_resp.json()
 
-        step_resp = http.post("/step", json=action)
-        step_resp.raise_for_status()
-        data = step_resp.json()
+        done = False
 
-        obs    = data["observation"]
-        reward = data["reward"]
-        done   = data["done"]
-        info   = data.get("info", {})
-
-        total_reward += reward["total"]
-        episode_rewards.append(reward["total"])
-        step_count += 1
-        if reasoning:
-            reasoning_steps += 1
-
-        # ── [STEP] log ─────────────────────────────────────────────────────────
-        step_log = {
-            "event": "STEP",
+        # ── [START] log ────────────────────────────────────────────────────────
+        print(json.dumps({
+            "event": "START",
             "task_id": task_id,
-            "step": step_count,
-            "reward": round(reward["total"], 4),
-            "done": done,
-            "breakdown": reward.get("breakdown", {}),
-            "info": info,
-            "latency_ms": round((time.time() - t0) * 1000),
-        }
-        # Include a truncated reasoning snippet so evaluators can verify CoT
-        if reasoning:
-            step_log["reasoning_snippet"] = reasoning[:300].replace("\n", " ") + (
-                "..." if len(reasoning) > 300 else ""
-            )
-        print(f"[STEP] task={task_id} step={step_count} reward={round(reward['total'], 4)} done={done}", flush=True)
+            "n_patients": len(obs.get("patients", [])),
+            "seed": 42,
+            "model": MODEL_NAME,
+        }), flush=True)
+
+        while not done:
+            t0 = time.time()
+            action, reasoning = ask_agent(obs)
+
+            step_resp = http.post("/step", json=action)
+            step_resp.raise_for_status()
+            data = step_resp.json()
+
+            obs    = data["observation"]
+            reward = data["reward"]
+            done   = data["done"]
+            info   = data.get("info", {})
+
+            step_reward = float(reward.get("total", reward.get("score", 0.5)))
+            total_reward += step_reward
+            episode_rewards.append(step_reward)
+            step_count += 1
+            if reasoning:
+                reasoning_steps += 1
+
+            step_score = _clamp_score(reward.get("score", step_reward))
+
+            # ── [STEP] log — JSON format ────────────────────────────────────
+            step_log: dict = {
+                "event": "STEP",
+                "task_id": task_id,
+                "step": step_count,
+                "score": step_score,
+                "reward": round(step_reward, 4),
+                "done": done,
+                "latency_ms": round((time.time() - t0) * 1000),
+            }
+            if reasoning:
+                step_log["reasoning_snippet"] = (
+                    reasoning[:300].replace("\n", " ")
+                    + ("..." if len(reasoning) > 300 else "")
+                )
+            print(json.dumps(step_log), flush=True)
+
+        avg_reward = total_reward / max(1, step_count)
+        task_score = _clamp_score(avg_reward)
+
+    except Exception as exc:
+        error_msg = str(exc)
+        print(json.dumps({"event": "ERROR", "task_id": task_id, "error": error_msg}),
+              flush=True)
+        # Compute partial score from whatever steps completed
+        if step_count > 0 and episode_rewards:
+            avg = total_reward / step_count
+            task_score = _clamp_score(avg)
+        else:
+            task_score = 0.1   # safe default strictly in (0, 1)
 
     avg_reward = total_reward / max(1, step_count)
-    # AFTER
-    task_score = round(max(0.05, min(0.95, avg_reward)), 4)
 
-    summary = {
-        "event": "END",
-        "task_id": task_id,
-        "steps": step_count,
-        "total_reward": round(total_reward, 4),
-        "avg_reward": round(avg_reward, 4),
-        "task_score": task_score,
-        "min_reward": round(min(episode_rewards), 4),
-        "max_reward": round(max(episode_rewards), 4),
+    summary: dict = {
+        "event":          "END",
+        "task_id":        task_id,
+        "score":          task_score,       # key the validator reads
+        "task_score":     task_score,       # alias kept for backward compat
+        "steps":          step_count,
+        "total_reward":   round(total_reward, 4),
+        "avg_reward":     round(avg_reward, 4),
         "reasoning_steps": reasoning_steps,
         "reasoning_rate": round(reasoning_steps / max(1, step_count), 3),
     }
+    if episode_rewards:
+        summary["min_reward"] = round(min(episode_rewards), 4)
+        summary["max_reward"] = round(max(episode_rewards), 4)
+    if error_msg:
+        summary["error"] = error_msg
 
-    # ── [END] log ──────────────────────────────────────────────────────────────
-    print(f"[END] task={task_id} score={task_score} steps={step_count} total_reward={round(total_reward, 4)} avg_reward={round(avg_reward, 4)}", flush=True)
+    # ── [END] log — ALWAYS printed, even on failure ─────────────────────────
+    print(json.dumps(summary), flush=True)
     return summary
 
 
 def main():
-    all_results = {}
+    all_results: dict[str, dict] = {}
 
     for task_id in TASKS:
-        print(f"\n{'=' * 60}", flush=True)
-        print(f"Running {task_id}...", flush=True)
+        print(json.dumps({"event": "TASK_BEGIN", "task_id": task_id}), flush=True)
         try:
             summary = run_task(task_id)
             all_results[task_id] = summary
-        except Exception as e:
-            err = {"event": "ERROR", "task_id": task_id, "error": str(e)}
-            print(json.dumps(err), flush=True)
-            # FIXED
-            all_results[task_id] = {"task_score": 0.05, "error": str(e)}
+        except Exception as exc:
+            # run_task handles its own exceptions; this is a last-resort catch
+            task_score = 0.1
+            summary = {
+                "event":      "END",
+                "task_id":    task_id,
+                "score":      task_score,
+                "task_score": task_score,
+                "error":      str(exc),
+            }
+            print(json.dumps(summary), flush=True)
+            all_results[task_id] = summary
 
-    # Final score summary
+    # ── Final score summary ─────────────────────────────────────────────────
+    scores = {tid: all_results.get(tid, {}).get("task_score", 0.1) for tid in TASKS}
+    overall = round(sum(scores.values()) / len(TASKS), 4)
+
+    print(json.dumps({"event": "FINAL", "scores": scores, "overall": overall}), flush=True)
+
+    # Human-readable summary (for convenience)
     print(f"\n{'=' * 60}", flush=True)
     print("BASELINE SCORES", flush=True)
     print("=" * 60, flush=True)
     for tid in TASKS:
-        score = all_results.get(tid, {}).get("task_score", 0.05)
-        print(f"  {tid}: {score:.4f}", flush=True)
-
-        
-    
-    overall = sum(all_results.get(t, {}).get("task_score", 0.05) for t in TASKS) / len(TASKS)
+        print(f"  {tid}: {scores[tid]:.4f}", flush=True)
     print(f"  overall: {overall:.4f}", flush=True)
-        
-    
-      
-       
 
 
 if __name__ == "__main__":

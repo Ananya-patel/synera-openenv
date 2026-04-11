@@ -58,10 +58,12 @@ class Action(BaseModel):
 # ── Reward ─────────────────────────────────────────────────────────────────────
 
 class RewardBreakdown(BaseModel):
-    artifact_signal: float = 0.0
-    exertion_signal: float = 0.0
-    trajectory_signal: float = 0.0
-    priority_signal: float = 0.0
+    # Signal fields default to a small epsilon so they are never exactly 0.0
+    artifact_signal: float = 0.001
+    exertion_signal: float = 0.001
+    trajectory_signal: float = 0.001
+    priority_signal: float = 0.001
+    # Penalty fields are non-positive; 0.0 means no penalty (semantically correct)
     false_positive_penalty: float = 0.0
     missed_alert_penalty: float = 0.0
 
